@@ -94,24 +94,47 @@ class FileStream
      */
     r ()
     {
-        return this.cache[this.position++];
-    }
-
-    /**
-     *Reads a byte from the stream.
-     *
-     * @returns {number}
-     * @memberof FileStream
-     */
-    read ()
-    {
         if (this.EOF) return null;
         if (this.position === this.cache.length)
         {
             // Read the next chunk
             this.readChunk(this.chunks[this.chunk + 1]);
         }
-        return this.r();
+        return this.cache[this.position++];
+    }
+
+    /**
+     *Reads from the streams byte buffer. 
+     *If array is supplied, Bytes read will be stored inside of it. 
+     *If offset and len are given, it will store the given number of bytes starting at the offset.
+     * 
+     * @param {number[]=} array Array to store read values
+     * @param {number=} offset The starting index of {@link array} to read into
+     * @param {number=} len The amount of bytes to read
+     * @returns {number} If no arguments, the byte read from the stream. If arguments, the number of bytes read.
+     * @memberof InputStream
+     */
+    read ()
+    {
+        let array, offset, len, bytesRead;
+        switch (arguments.length) {
+            case 0:
+                return this.r();
+            case 1:
+                array = arguments[0];
+                if(!isArray(array)) throw this.invalidArgError;
+                bytesRead = 0;
+                for(; bytesRead < array.length && this.currentByte != null; ++bytesRead) array[bytesRead] = this.r();
+                return array;
+            case 3:
+                [array, offset, len] = arguments;
+                if(!isArray(array)) throw this.invalidArgError;
+                bytesRead = 0;
+                for(; bytesRead < len && this.currentByte != null; ++bytesRead) array[bytesRead + offset] = this.r();
+                return bytesRead;
+            default:
+                throw new Error("Invalid arguments for stream read function");
+        }
     }
 
     seek (offset)
