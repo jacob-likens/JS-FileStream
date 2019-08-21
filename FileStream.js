@@ -15,7 +15,7 @@ class FileStream
         splitPattern: [],
         readAll: false,
         type: "binary",
-        mode: "read",
+        mode: "r",
         defaultFileName: "file",
     };
 
@@ -24,15 +24,70 @@ class FileStream
     // The index of our chunk
     chunk = 0;
 
-    constructor (blob, config = null)
+    closed = true;
+
+    constructor (config = this.config)
     {
-        // Basic type checking
-        if (!(blob instanceof Blob) && !(blob instanceof File)) throw new Error("Invalid parameter for blob/file.");
         if (config instanceof Object) {
             this.config = {...this.config, ...config};
         } else if(config !== null) {
             throw new Error("Invalid parameter for configuration.");
         }
+
+        // reading mode
+        if (this.config.mode.includes("r")) {
+            // Generic functions and binary
+            this.open = GenericRead.open;
+            this.r = GenericRead.r;
+            this.read = GenericRead.read;
+            this.readChunk = GenericRead.readChunk;
+            this.sliceChunk = GenericRead.sliceChunk;
+            this.seek = GenericRead.seek;
+            this.seekLocal = GenericRead.seekLocal;
+
+            // Textmode
+            if (this.config.type === "text") {
+                this.readLine = TextRead.readLine;
+                this.readLines = TextRead.readLines;
+            }
+        }
+    }
+
+    tell ()
+    {
+        return this.offset + (this.chunkSize * this.chunk);
+    }
+
+    get EOF()
+    {
+        return (this.tell() > this.blob.size);
+    }
+
+    get currentByte ()
+    {
+        return this.cache[this.position];
+    }
+
+    get writeable ()
+    {
+        return  this.config.mode.includes("w");
+    }
+}
+
+class GenericRead
+{
+
+    /**
+     *Opens the given blob into the file stream
+     *
+     * @param {blob} The blob or file to open
+     * @returns {blob}
+     * @memberof FileStream
+     */
+    open (blob)
+    {
+        // Basic type checking
+        if (!(blob instanceof Blob) && !(blob instanceof File)) throw new Error("Invalid parameter for blob/file.");
         
         // Set up our internal data
         this.cache = null;
@@ -48,7 +103,56 @@ class FileStream
         });
 
         this.readChunk(0);
-        
+        this.closed = false;
+    }
+
+
+    /**
+     *Seeks to a place within the stream, where the offset given is out of the total bytes in the blob
+     *
+     * @param {number} offset the offset in the file to seek to
+     * @memberof FileStream
+     */
+    seek (offset)
+    {
+        const newChunkIndex = (offset) =>
+        {
+            if (offset > this.blob.size) throw new Error("Attempted to find a chunk index from an invalid offset");
+            return Math.ceil(offset / this.config.chunkSize);
+        }
+
+        if (offset > this.blob.size || offset < 0) throw new Error("Attempted to seek to an invalid offset.");
+        const chunk = newChunkIndex(offset);
+        if (chunk !== this.chunk) {
+            this.readChunk(chunk);
+        }
+
+        //Move our position relative to the chunk
+        this.position = offset % this.config.chunkSize;
+    }
+
+    /**
+     *Seeks to a position within the local chunk
+     *
+     * @param {number} index the index of the chunk to slice
+     * @returns {number} Current position in the file
+     * @memberof FileStream
+     */
+    seekLocal (offset)
+    {
+        if (offset > this.config.chunkSize || offset < 0) throw new Error("Attempted to seek to an invalid offset.");
+        this.position = offset;
+        return this.tell();
+    }
+
+    skip (amount)
+    {
+        for (let i = 0; i < amount; ++i) {
+            this.r();
+            if (this.EOF) return i;
+        }
+
+        return amount;
     }
 
     /**
@@ -136,47 +240,38 @@ class FileStream
                 throw new Error("Invalid arguments for stream read function");
         }
     }
+}
 
-    seek (offset)
+class TextRead
+{
+    currentLine = 0;
+
+    readLine ()
     {
-        if (offset > this.blob.size || offset < 0) throw new Error("Attempted to seek to an invalid offset.");
-        const chunk = this.getChunkIndexFromOffset(offset);
-        if (chunk !== this.chunk) {
-            this.readChunk(chunk);
+        let byte;
+        let s = "";
+        while ( (byte = this.r()) !== 0x0A) {
+            if (byte === null) break;
+            s += String.fromCharCode(byte);
         }
-        this.position = this.newLocalOffset(offset);
+        ++this.currentLine;
+        return s;
     }
 
-    seekLocal (offset)
+    readLines(amount)
     {
-        if (offset > this.config.chunkSize || offset < 0) throw new Error("Attempted to seek to an invalid offset.");
-        this.position = offset;
-        return this.tell();
-    }
+        let s = [];
+        for (let i = 0; i < amount; ++i) {
 
-    getChunkIndexFromOffset (offset)
-    {
-        if (offset > this.blob.size) throw new Error("Attempted to find a chunk index from an invalid offset");
-        return Math.ceil(offset / this.config.chunkSize);
-    }
+            const str = this.readLine();
+            s.push(str);
 
-    get newLocalOffset (realOffset)
-    {
-        return (realOffset % this.config.chunkSize);
-    }
-
-    tell ()
-    {
-        return this.offset + (this.chunkSize * this.chunk);
-    }
-
-    get EOF()
-    {
-        return (this.tell() > this.blob.size);
-    }
-
-    get currentByte ()
-    {
-        return this.cache[this.position];
+            if(str.charCodeAt(str.length - 1) !== 0x0A) {
+                // Warn for potential unexpected EOF
+                (i + 1 !== amount) ? console.warn("Reached end of stream before we could read all given lines!") : null;
+                break;
+            }
+        }
+        return s.join("\n");
     }
 }
